@@ -6,51 +6,72 @@ from analisis import AnalisadorVentas
 from anthropic import Anthropic
 import os
 from dotenv import load_dotenv
-from pathlib import Path
 import time
-
+from io import BytesIO
+import requests
+ 
 # Cargar variables de entorno
 load_dotenv()
-
+ 
 # Configurar página
 st.set_page_config(page_title="Dashboard Ventas Barein GP", layout="wide", initial_sidebar_state="expanded")
-
+ 
 # Título y descripción
 st.title("📊 Dashboard de Análisis de Ventas - Barein GP")
 st.markdown("Análisis automático de KPIs, segmentación y anomalías con insights de IA")
-
-# Ruta del archivo
-RUTA_ARCHIVO = r"C:\Nuevo\Venta_consolidado.xlsx"
-
+ 
+# URL del archivo en GitHub (raw)
+GITHUB_REPO = "francortacans-dot/dashboard-ventas-barein"
+GITHUB_FILE = "Venta_consolidado.xlsx"
+GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{GITHUB_FILE}"
+ 
 # Sidebar
 st.sidebar.title("⚙️ Configuración")
-
-# Verificar si el archivo existe
-archivo_existe = os.path.exists(RUTA_ARCHIVO)
-
-if not archivo_existe:
-    st.error(f"❌ Archivo no encontrado: {RUTA_ARCHIVO}")
-    st.info("Asegurate de que `Venta_consolidado.xlsx` esté en `C:\\Nuevo`")
-    st.stop()
-
+ 
 # Botón de recarga
 col1, col2, col3 = st.sidebar.columns([2, 1, 1])
 with col1:
     if st.button("🔄 Recargar Datos", use_container_width=True):
         st.rerun()
-
+ 
 with col2:
     st.write("")
-
+ 
 with col3:
     st.caption(f"⏰ {time.strftime('%H:%M')}")
-
-# Mostrar ruta
-st.sidebar.info(f"📁 Archivo: {RUTA_ARCHIVO}")
-
+ 
+# Mostrar información
+st.sidebar.info(f"📁 Fuente: GitHub (Raw)")
+ 
+# Cargar datos desde GitHub
+@st.cache_data
+def cargar_archivo_github():
+    try:
+        response = requests.get(GITHUB_RAW_URL)
+        if response.status_code == 200:
+            return BytesIO(response.content)
+        else:
+            return None
+    except Exception as e:
+        st.error(f"Error al descargar: {str(e)}")
+        return None
+ 
 # Cargar análisis
 try:
-    analizador = AnalisadorVentas(RUTA_ARCHIVO)
+    # Descargar el archivo de GitHub
+    st.info("📥 Cargando datos desde GitHub...")
+    archivo_bytes = cargar_archivo_github()
+    
+    if archivo_bytes is None:
+        st.error("No se pudo descargar el archivo de GitHub")
+        st.stop()
+    
+    # Crear analizador con el archivo descargado
+    analizador = AnalisadorVentas.__new__(AnalisadorVentas)
+    analizador.df = pd.read_excel(archivo_bytes)
+    analizador.df['Fecha'] = pd.to_datetime(analizador.df['MES/AÑO'], format='%m/%Y', errors='coerce')
+    analizador.df['Cant'] = pd.to_numeric(analizador.df['Cant'], errors='coerce')
+    analizador.df['Importe ML'] = pd.to_numeric(analizador.df['Importe ML'], errors='coerce')
     
     # Tabs principales
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 KPIs", "👥 Segmentación", "⚠️ Anomalías", "🤖 Análisis IA", "📊 Visualizaciones"])
@@ -120,7 +141,8 @@ try:
         # Verificar API key
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            st.error("❌ API key de Anthropic no configurada. Verifica tu archivo .env")
+            st.error("❌ API key de Anthropic no configurada")
+            st.info("Este dashboard necesita una API key de Claude para funcionar completamente")
         else:
             st.success("✅ Conectado a Claude")
             
@@ -138,20 +160,23 @@ try:
             
             if st.button("📋 Generar Análisis Automático"):
                 with st.spinner("Claude está analizando..."):
-                    response = client.messages.create(
-                        model="claude-3-5-sonnet-20241022",
-                        max_tokens=1500,
-                        messages=[
-                            {"role": "user", "content": mensaje_default}
-                        ]
-                    )
-                    
-                    insight = response.content[0].text
-                    st.markdown("### 📊 Insights Generados por Claude:")
-                    st.markdown(insight)
-                    
-                    # Permitir copiar
-                    st.code(insight, language="markdown")
+                    try:
+                        response = client.messages.create(
+                            model="claude-3-5-sonnet-20241022",
+                            max_tokens=1500,
+                            messages=[
+                                {"role": "user", "content": mensaje_default}
+                            ]
+                        )
+                        
+                        insight = response.content[0].text
+                        st.markdown("### 📊 Insights Generados por Claude:")
+                        st.markdown(insight)
+                        
+                        # Permitir copiar
+                        st.code(insight, language="markdown")
+                    except Exception as e:
+                        st.error(f"Error al conectar con Claude: {str(e)}")
     
     # TAB 5: Visualizaciones
     with tab5:
@@ -204,7 +229,8 @@ try:
             ])
             fig_productos.update_layout(title="Top 10 Productos (Cantidad)", xaxis_title="Cantidad Vendida")
             st.plotly_chart(fig_productos, use_container_width=True)
-
+ 
 except Exception as e:
     st.error(f"Error al procesar el archivo: {str(e)}")
-    st.info("Verifica que el archivo esté en la ruta correcta y tenga el formato esperado.")
+    st.info("Verifica que el archivo esté en GitHub y que tengas las librerías necesarias instaladas.")
+ 
